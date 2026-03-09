@@ -1,0 +1,20 @@
+enable_infra: false
+enable_infra1: false
+enable_infra2: false
+enable_color: true
+enable_depth: true
+enable_gyro: false
+enable_accel: false
+rgb_camera.color_profile: 640x480x15  # 424x240x15
+depth_module.depth_profile: 640x480x15  # 480x270x15
+align_depth.enable: true
+enable_sync: true
+accelerate_gpu_with_glsl: true
+pointcloud.enable: true
+
+# camera_namespace: realsense
+# camera_name: camera_1
+# initial_reset: true
+
+# color_qos: SENSOR_DATA
+# depth_qos: SENSOR_DATA

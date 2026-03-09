@@ -1,0 +1,15 @@
+# ROS bag recordings
+rosbag2_*/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# ROS
+*.pyc
+install/
+log/
