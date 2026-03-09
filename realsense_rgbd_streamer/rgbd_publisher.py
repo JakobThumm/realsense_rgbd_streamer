@@ -418,6 +418,9 @@ class RGBDPublisher(Node):
             # legs have inherently different transit times.
             net_combined_ms = max(0.0, full_rtt_ms - sub_total_ms)
 
+            # Total = everything from frame received in callback to pong received
+            total_ms = (t_pong_received - p['t_frame_received']) / 1e6
+
             result = {
                 'seq': pong['seq'],
                 'bridge_ms': bridge_ms,
@@ -428,13 +431,14 @@ class RGBDPublisher(Node):
                 'sub_overhead_ms': sub_overhead_ms,
                 'sub_total_ms': sub_total_ms,
                 'full_rtt_ms': full_rtt_ms,
+                'total_ms': total_ms,
                 'size_kb': pong.get('size_kb', 0.0),
             }
             self.test_results.append(result)
 
             self.get_logger().info(
                 f'[Pong {pong["seq"]:3d}/{self.test_count - 1}] '
-                f'RTT={full_rtt_ms:.1f}ms  '
+                f'total={total_ms:.1f}ms  '
                 f'bridge={bridge_ms:.1f}ms  '
                 f'compress={compress_ms:.1f}ms  '
                 f'net(both)={net_combined_ms:.1f}ms  '
@@ -462,7 +466,7 @@ class RGBDPublisher(Node):
         net_s       = stats('net_combined_ms')
         decomp_s    = stats('decomp_ms')
         sub_over_s  = stats('sub_overhead_ms')
-        rtt_s       = stats('full_rtt_ms')
+        total_s     = stats('total_ms')
 
         bar = '=' * 70
         self.get_logger().info(bar)
@@ -490,9 +494,10 @@ class RGBDPublisher(Node):
         self.get_logger().info(
             f'{"Network total (pub→sub + sub→pub)":<44} '
             f'{net_s[0]:6.1f} {net_s[1]:7.1f} {net_s[2]:7.1f}')
+        self.get_logger().info('-' * 70)
         self.get_logger().info(
-            f'{"Full RTT  (publish → ack received)":<44} '
-            f'{rtt_s[0]:6.1f} {rtt_s[1]:7.1f} {rtt_s[2]:7.1f}')
+            f'{"Total  (frame received → pong received)":<44} '
+            f'{total_s[0]:6.1f} {total_s[1]:7.1f} {total_s[2]:7.1f}')
         self.get_logger().info(bar)
         self.get_logger().info(
             'Note: "Network total" = RTT - subscriber_total (both directions combined).')
