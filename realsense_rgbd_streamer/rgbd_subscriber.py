@@ -3,17 +3,22 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CompressedImage
+from std_msgs.msg import String
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import time
 import os
+import json
 
 
 class RGBDSubscriber(Node):
     """
     Subscribes to RGBD stream and displays/saves images.
     Handles both compressed and uncompressed formats.
+
+    In test_connection mode, acts as the pong side of a ping-pong latency
+    test against an rgbd_publisher running in test_connection mode.
     """
 
     def __init__(self):
@@ -24,16 +29,29 @@ class RGBDSubscriber(Node):
         self.declare_parameter('display', True)
         self.declare_parameter('save_path', '')
         self.declare_parameter('save_rate', 1.0)  # Save every N seconds
+        self.declare_parameter('test_connection', False)
 
         # Get parameters
         self.compressed = self.get_parameter('compressed').value
         self.display = self.get_parameter('display').value
         self.save_path = self.get_parameter('save_path').value
         self.save_rate = self.get_parameter('save_rate').value
+        self.test_connection = self.get_parameter('test_connection').value
 
         # CV Bridge
         self.bridge = CvBridge()
 
+        if self.test_connection:
+            self._init_test_mode()
+        else:
+            self._init_normal_mode()
+
+    # -------------------------------------------------------------------------
+    # Normal streaming mode
+    # -------------------------------------------------------------------------
+
+    def _init_normal_mode(self):
+        """Initialize normal RGBD display/save mode."""
         # State
         self.rgb_image = None
         self.depth_image = None
@@ -239,6 +257,108 @@ class RGBDSubscriber(Node):
         self.depth_received = 0
         self.last_stats_time = current_time
         self.decompression_times = []
+
+    # -------------------------------------------------------------------------
+    # Connection test mode
+    # -------------------------------------------------------------------------
+
+    def _init_test_mode(self):
+        """Initialize connection latency test mode (pong side).
+
+        Subscribes to connection_test/ping, decompresses each image, and
+        immediately publishes a JSON pong on connection_test/pong containing
+        the subscriber-side timestamps so the publisher can compute per-step
+        latency.
+
+        Pong JSON fields:
+          seq            : ping sequence number (int)
+          t_msg_received : time.time_ns() at start of ping callback
+          t_decomp_done  : time.time_ns() after cv2.imdecode completes
+          t_pong_sent    : time.time_ns() just before pong publish()
+          size_kb        : compressed image size in kilobytes (float)
+        """
+        self.pings_received = 0
+
+        # Subscribe to pings
+        self.ping_sub = self.create_subscription(
+            CompressedImage,
+            'connection_test/ping',
+            self.ping_callback,
+            10)
+
+        # Publish pongs
+        self.pong_pub = self.create_publisher(
+            String, 'connection_test/pong', 10)
+
+        self.get_logger().info('=== RGBD Subscriber: Connection Test Mode ===')
+        self.get_logger().info('Ping topic : connection_test/ping')
+        self.get_logger().info('Pong topic : connection_test/pong')
+        self.get_logger().info('Waiting for pings from publisher ...')
+
+    def ping_callback(self, msg):
+        """Receive a ping, decompress the image, and send a pong.
+
+        Timing sequence (all via time.time_ns()):
+          t_msg_received  — very first thing in this callback
+          [np.frombuffer + cv2.imdecode]
+          t_decomp_done   — right after decompression
+          [build pong JSON]
+          t_pong_sent     — just before pong publish()
+        """
+        # --- Record receive time as the very first operation ---
+        t_msg_received = time.time_ns()
+
+        # Parse sequence number from frame_id
+        # Format set by publisher: "latency_test:{seq}:..."
+        seq = -1
+        frame_parts = msg.header.frame_id.split(':')
+        if len(frame_parts) >= 2 and frame_parts[0] == 'latency_test':
+            try:
+                seq = int(frame_parts[1])
+            except ValueError:
+                pass
+
+        if seq < 0:
+            self.get_logger().error(
+                f'Received ping with unexpected frame_id: "{msg.header.frame_id}"')
+            return
+
+        # --- Decompress JPEG ---
+        np_arr = np.frombuffer(msg.data, np.uint8)
+        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        t_decomp_done = time.time_ns()
+
+        if cv_image is None:
+            self.get_logger().error(f'[Ping {seq}] Failed to decompress JPEG')
+            return
+
+        size_kb = len(msg.data) / 1024
+
+        # --- Build and send pong ---
+        pong_data = {
+            'seq': seq,
+            't_msg_received': t_msg_received,
+            't_decomp_done': t_decomp_done,
+            't_pong_sent': 0,        # filled in just below
+            'size_kb': round(size_kb, 2),
+        }
+
+        t_pong_sent = time.time_ns()
+        pong_data['t_pong_sent'] = t_pong_sent
+
+        pong_msg = String()
+        pong_msg.data = json.dumps(pong_data)
+        self.pong_pub.publish(pong_msg)
+
+        self.pings_received += 1
+        decomp_ms = (t_decomp_done - t_msg_received) / 1e6
+        overhead_ms = (t_pong_sent - t_decomp_done) / 1e6
+
+        self.get_logger().info(
+            f'[Ping {seq:3d}] Received & pong sent | '
+            f'decomp={decomp_ms:.1f}ms  overhead={overhead_ms:.1f}ms  '
+            f'size={size_kb:.1f} KB'
+        )
 
 
 def main(args=None):
