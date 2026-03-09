@@ -10,6 +10,7 @@ import numpy as np
 import time
 import threading
 import json
+import zstandard
 
 
 class RGBDPublisher(Node):
@@ -31,6 +32,8 @@ class RGBDPublisher(Node):
         self.declare_parameter('compress_rgb', False)
         self.declare_parameter('compress_depth', False)
         self.declare_parameter('rgb_quality', 90)  # JPEG quality 0-100
+        self.declare_parameter('depth_compression_format', 'zstd')  # 'zstd' or 'png'
+        self.declare_parameter('depth_zstd_level', 3)   # Zstd level 1-22
         self.declare_parameter('depth_png_compression', 3)  # PNG compression 0-9
         self.declare_parameter('camera_namespace', '/camera/camera')
         self.declare_parameter('test_connection', False)
@@ -41,7 +44,10 @@ class RGBDPublisher(Node):
         self.compress_rgb = self.get_parameter('compress_rgb').value
         self.compress_depth = self.get_parameter('compress_depth').value
         self.rgb_quality = self.get_parameter('rgb_quality').value
+        self.depth_compression_format = self.get_parameter('depth_compression_format').value
+        self.depth_zstd_level = self.get_parameter('depth_zstd_level').value
         self.depth_png_compression = self.get_parameter('depth_png_compression').value
+        self._zstd_compressor = zstandard.ZstdCompressor(level=self.depth_zstd_level)
         camera_ns = self.get_parameter('camera_namespace').value
         self.test_connection = self.get_parameter('test_connection').value
         self.test_count = int(self.get_parameter('test_count').value)
@@ -121,8 +127,14 @@ class RGBDPublisher(Node):
         self.get_logger().info(f'Publishing rate: {self.publish_rate} Hz')
         self.get_logger().info(f'RGB compression: {self.compress_rgb}' +
                               (f' (quality={self.rgb_quality})' if self.compress_rgb else ''))
-        self.get_logger().info(f'Depth compression: {self.compress_depth}' +
-                              (f' (level={self.depth_png_compression})' if self.compress_depth else ''))
+        if self.compress_depth:
+            if self.depth_compression_format == 'zstd':
+                depth_info = f' (zstd level={self.depth_zstd_level})'
+            else:
+                depth_info = f' (png level={self.depth_png_compression})'
+        else:
+            depth_info = ''
+        self.get_logger().info(f'Depth compression: {self.compress_depth}{depth_info}')
         self.get_logger().info(f'Subscribing to: {camera_ns}/color/image_raw')
         self.get_logger().info(f'Subscribing to: {camera_ns}/aligned_depth_to_color/image_raw')
 
@@ -177,23 +189,28 @@ class RGBDPublisher(Node):
         return msg
 
     def compress_depth_image(self, cv_image, timestamp):
-        """Compress depth image to PNG."""
+        """Compress depth image using Zstd or PNG."""
         compress_start = time.time()
 
-        # Depth is typically uint16, encode to PNG with compression
-        encode_param = [int(cv2.IMWRITE_PNG_COMPRESSION), self.depth_png_compression]
-        success, encoded = cv2.imencode('.png', cv_image, encode_param)
-
-        if not success:
-            self.get_logger().error('Failed to compress depth image')
-            return None
-
-        # Create CompressedImage message
         msg = CompressedImage()
         msg.header.stamp = timestamp
         msg.header.frame_id = 'camera_depth_optical_frame'
-        msg.format = '16UC1; png'  # Depth format
-        msg.data = encoded.tobytes()
+
+        if self.depth_compression_format == 'zstd':
+            # Compress raw uint16 bytes with Zstd (lossless, fast)
+            h, w = cv_image.shape[:2]
+            compressed = self._zstd_compressor.compress(cv_image.tobytes())
+            msg.format = f'zstd_16UC1:{h}x{w}'
+            msg.data = list(compressed)
+        else:
+            # Fallback: PNG
+            encode_param = [int(cv2.IMWRITE_PNG_COMPRESSION), self.depth_png_compression]
+            success, encoded = cv2.imencode('.png', cv_image, encode_param)
+            if not success:
+                self.get_logger().error('Failed to compress depth image')
+                return None
+            msg.format = '16UC1; png'
+            msg.data = encoded.tobytes()
 
         compress_time = (time.time() - compress_start) * 1000  # ms
         self.compression_times.append(compress_time)

@@ -30,10 +30,22 @@ def generate_launch_description():
         description='JPEG quality for RGB compression (0-100)'
     )
 
+    depth_compression_format_arg = DeclareLaunchArgument(
+        'depth_compression_format',
+        default_value='zstd',
+        description='Depth compression format: zstd (default) or png'
+    )
+
+    depth_zstd_level_arg = DeclareLaunchArgument(
+        'depth_zstd_level',
+        default_value='3',
+        description='Zstd compression level for depth (1-22)'
+    )
+
     depth_compression_arg = DeclareLaunchArgument(
         'depth_png_compression',
         default_value='3',
-        description='PNG compression level for depth (0-9)'
+        description='PNG compression level for depth (0-9, used when depth_compression_format=png)'
     )
 
     camera_namespace_arg = DeclareLaunchArgument(
@@ -53,6 +65,8 @@ def generate_launch_description():
             'compress_rgb': LaunchConfiguration('compress_rgb'),
             'compress_depth': LaunchConfiguration('compress_depth'),
             'rgb_quality': LaunchConfiguration('rgb_quality'),
+            'depth_compression_format': LaunchConfiguration('depth_compression_format'),
+            'depth_zstd_level': LaunchConfiguration('depth_zstd_level'),
             'depth_png_compression': LaunchConfiguration('depth_png_compression'),
             'camera_namespace': LaunchConfiguration('camera_namespace'),
         }]
@@ -63,6 +77,8 @@ def generate_launch_description():
         compress_rgb_arg,
         compress_depth_arg,
         rgb_quality_arg,
+        depth_compression_format_arg,
+        depth_zstd_level_arg,
         depth_compression_arg,
         camera_namespace_arg,
         rgbd_publisher,

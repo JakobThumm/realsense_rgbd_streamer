@@ -10,6 +10,7 @@ import numpy as np
 import time
 import os
 import json
+import zstandard
 
 
 class RGBDSubscriber(Node):
@@ -132,13 +133,20 @@ class RGBDSubscriber(Node):
             self.get_logger().error(f'Error in RGB callback: {e}')
 
     def depth_compressed_callback(self, msg):
-        """Callback for compressed depth images."""
+        """Callback for compressed depth images (Zstd or PNG)."""
         decompress_start = time.time()
 
         try:
-            # Decode PNG
-            np_arr = np.frombuffer(msg.data, np.uint8)
-            cv_image = cv2.imdecode(np_arr, cv2.IMREAD_ANYDEPTH)
+            if msg.format.startswith('zstd_16UC1:'):
+                # Zstd-compressed raw uint16 bytes
+                dims = msg.format.split(':')[1]
+                h, w = map(int, dims.split('x'))
+                raw = zstandard.ZstdDecompressor().decompress(bytes(msg.data))
+                cv_image = np.frombuffer(raw, dtype=np.uint16).reshape(h, w)
+            else:
+                # PNG fallback
+                np_arr = np.frombuffer(msg.data, np.uint8)
+                cv_image = cv2.imdecode(np_arr, cv2.IMREAD_ANYDEPTH)
 
             if cv_image is None:
                 self.get_logger().error('Failed to decode depth image')
