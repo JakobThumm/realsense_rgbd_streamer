@@ -26,21 +26,21 @@ class DepthToPointCloud(Node):
         # Subscribers
         self.depth_sub = self.create_subscription(
             Image,
-            '/realsense/camera_1/aligned_depth_to_color/image_raw',
+            '/camera/camera/aligned_depth_to_color/image_raw',
             self.depth_callback,
             10
         )
 
         self.color_sub = self.create_subscription(
             Image,
-            '/realsense/camera_1/color/image_raw',
+            '/camera/camera/color/image_raw',
             self.color_callback,
             10
         )
 
         self.camera_info_sub = self.create_subscription(
             CameraInfo,
-            '/realsense/camera_1/aligned_depth_to_color/camera_info',
+            '/camera/camera/aligned_depth_to_color/camera_info',
             self.camera_info_callback,
             10
         )
@@ -48,7 +48,7 @@ class DepthToPointCloud(Node):
         # Publisher for pointcloud
         self.pointcloud_pub = self.create_publisher(
             PointCloud2,
-            '/realsense/camera_1/pointcloud',
+            '/camera/camera/pointcloud',
             10
         )
 

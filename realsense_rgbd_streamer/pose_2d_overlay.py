@@ -6,7 +6,8 @@ Node to overlay 2D pose keypoints on RGB image for visualization.
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from uq_msgs.msg import Pose2D
+from uq_msgs.msg import Pose2D, Pose3D
+from geometry_msgs.msg import PoseArray, Pose
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -15,6 +16,9 @@ import numpy as np
 class Pose2DOverlay(Node):
     def __init__(self):
         super().__init__('pose_2d_overlay')
+
+        self.declare_parameter('fps', 10.0)
+        fps = self.get_parameter('fps').get_parameter_value().double_value
 
         self.bridge = CvBridge()
 
@@ -25,7 +29,7 @@ class Pose2DOverlay(Node):
         # Subscribers
         self.image_sub = self.create_subscription(
             Image,
-            '/realsense/camera_1/color/image_raw',
+            '/camera/camera/color/image_raw',
             self.image_callback,
             10
         )
@@ -44,8 +48,21 @@ class Pose2DOverlay(Node):
             10
         )
 
+        # Pose3D -> PoseArray converter
+        self.pose3d_sub = self.create_subscription(
+            Pose3D,
+            '/uq/pose_3d',
+            self.pose3d_callback,
+            10
+        )
+        self.pose_array_pub = self.create_publisher(
+            PoseArray,
+            '/uq/pose_3d_vis',
+            10
+        )
+
         # Timer to publish overlayed image
-        self.timer = self.create_timer(0.033, self.publish_overlay)  # ~30 Hz
+        self.timer = self.create_timer(1.0 / fps, self.publish_overlay)
 
         # Joint names for interpretability (13 joints)
         self.joint_names = [
@@ -67,6 +84,25 @@ class Pose2DOverlay(Node):
 
         self.get_logger().info('Pose 2D Overlay node initialized (13-joint model)')
         self.get_logger().info('Publishing overlayed image to /uq/pose_2d_overlay')
+
+    def pose3d_callback(self, msg: Pose3D):
+        """Convert Pose3D to PoseArray and republish for RViz."""
+        if not msg.human_detected or msg.n_joints == 0:
+            return
+
+        pose_array = PoseArray()
+        pose_array.header = msg.header
+
+        pts = msg.points_3d
+        for i in range(msg.n_joints):
+            p = Pose()
+            p.position.x = pts[i * 3] / 1000.0
+            p.position.y = pts[i * 3 + 1] / 1000.0
+            p.position.z = pts[i * 3 + 2] / 1000.0
+            p.orientation.w = 1.0
+            pose_array.poses.append(p)
+
+        self.pose_array_pub.publish(pose_array)
 
     def image_callback(self, msg):
         """Store latest RGB image."""

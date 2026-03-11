@@ -1,0 +1,30 @@
+# Camera pose presets: transform from 'world' to 'camera_link'
+# Values: x, y, z [meters], roll, pitch, yaw [radians]
+#
+# Usage in launch files:
+#   ros2 launch realsense_rgbd_streamer realsense_camera.launch.py camera_pose:=desk
+
+presets:
+  default:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+  lab:
+    x: 0.36
+    y: -0.67
+    z: 0.8
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+  overhead:
+    x: 0.0
+    y: 0.0
+    z: 2.0
+    roll: 0.0
+    pitch: 0.7
+    yaw: 0.0

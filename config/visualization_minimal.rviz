@@ -40,7 +40,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /realsense/camera_1/depth/color/points
+        Value: /camera/camera/depth/color/points
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -57,7 +57,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /realsense/camera_1/color/image_raw
+        Value: /camera/camera/color/image_raw
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -92,13 +92,13 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /uq/pose_3d
+        Value: /uq/pose_3d_vis
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: camera_1_link
-    Frame Rate: 30
+    Fixed Frame: camera_link
+    Frame Rate: 10
   Name: root
   Tools:
     - Class: rviz_default_plugins/Interact
