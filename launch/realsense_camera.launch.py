@@ -30,6 +30,8 @@ def generate_launch_description():
             'align_depth.enable': 'true',
             'depth_module.depth_profile': LaunchConfiguration('depth_profile'),
             'rgb_camera.color_profile': LaunchConfiguration('color_profile'),
+            'camera_namespace': 'camera',
+            'camera_name': 'camera',
         }.items()
     )
 

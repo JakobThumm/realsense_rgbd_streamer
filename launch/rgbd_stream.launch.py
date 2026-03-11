@@ -37,13 +37,13 @@ def generate_launch_description():
 
     depth_zstd_level_arg = DeclareLaunchArgument(
         'depth_zstd_level',
-        default_value='3',
+        default_value='1',
         description='Zstd compression level for depth (1-22)'
     )
 
     depth_png_compression_arg = DeclareLaunchArgument(
         'depth_png_compression',
-        default_value='3',
+        default_value='1',
         description='PNG compression level for depth (0-9, used when depth_compression_format=png)'
     )
 
