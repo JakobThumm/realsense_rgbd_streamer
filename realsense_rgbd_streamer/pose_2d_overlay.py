@@ -17,9 +17,6 @@ class Pose2DOverlay(Node):
     def __init__(self):
         super().__init__('pose_2d_overlay')
 
-        self.declare_parameter('fps', 10.0)
-        fps = self.get_parameter('fps').get_parameter_value().double_value
-
         self.bridge = CvBridge()
 
         # Latest data
@@ -60,9 +57,6 @@ class Pose2DOverlay(Node):
             '/uq/pose_3d_vis',
             10
         )
-
-        # Timer to publish overlayed image
-        self.timer = self.create_timer(1.0 / fps, self.publish_overlay)
 
         # Joint names for interpretability (13 joints)
         self.joint_names = [
@@ -105,8 +99,9 @@ class Pose2DOverlay(Node):
         self.pose_array_pub.publish(pose_array)
 
     def image_callback(self, msg):
-        """Store latest RGB image."""
+        """Store latest RGB image and trigger overlay publish."""
         self.latest_image = msg
+        self.publish_overlay()
 
     def pose_callback(self, msg):
         """Store latest 2D pose data."""
