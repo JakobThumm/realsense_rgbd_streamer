@@ -1,10 +1,28 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
+import os
 
 
 def generate_launch_description():
+    pkg_dir = get_package_share_directory('realsense_rgbd_streamer')
+
+    # Camera arguments
+    depth_profile_arg = DeclareLaunchArgument(
+        'depth_profile',
+        default_value='848x480x30',
+        description='RealSense depth module profile (WxHxFPS)'
+    )
+
+    color_profile_arg = DeclareLaunchArgument(
+        'color_profile',
+        default_value='848x480x30',
+        description='RealSense RGB camera profile (WxHxFPS)'
+    )
+
+    # Streamer arguments
     publish_rate_arg = DeclareLaunchArgument(
         'publish_rate',
         default_value='25.0',
@@ -53,12 +71,21 @@ def generate_launch_description():
         description='RealSense camera namespace'
     )
 
-    rgbd_publisher = Node(
-        package='realsense_rgbd_streamer',
-        executable='rgbd_publisher',
-        name='rgbd_publisher',
-        output='screen',
-        parameters=[{
+    camera_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_dir, 'launch', 'realsense_camera.launch.py')
+        ),
+        launch_arguments={
+            'depth_profile': LaunchConfiguration('depth_profile'),
+            'color_profile': LaunchConfiguration('color_profile'),
+        }.items()
+    )
+
+    streamer_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_dir, 'launch', 'rgbd_stream.launch.py')
+        ),
+        launch_arguments={
             'publish_rate': LaunchConfiguration('publish_rate'),
             'compress_rgb': LaunchConfiguration('compress_rgb'),
             'compress_depth': LaunchConfiguration('compress_depth'),
@@ -67,10 +94,12 @@ def generate_launch_description():
             'depth_zstd_level': LaunchConfiguration('depth_zstd_level'),
             'depth_png_compression': LaunchConfiguration('depth_png_compression'),
             'camera_namespace': LaunchConfiguration('camera_namespace'),
-        }]
+        }.items()
     )
 
     return LaunchDescription([
+        depth_profile_arg,
+        color_profile_arg,
         publish_rate_arg,
         compress_rgb_arg,
         compress_depth_arg,
@@ -79,5 +108,6 @@ def generate_launch_description():
         depth_zstd_level_arg,
         depth_png_compression_arg,
         camera_namespace_arg,
-        rgbd_publisher,
+        camera_launch,
+        streamer_launch,
     ])
