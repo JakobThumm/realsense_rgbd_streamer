@@ -7,7 +7,8 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from uq_msgs.msg import Pose2D, Pose3D
-from geometry_msgs.msg import PoseArray, Pose
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -45,15 +46,15 @@ class Pose2DOverlay(Node):
             10
         )
 
-        # Pose3D -> PoseArray converter
+        # Pose3D -> MarkerArray converter
         self.pose3d_sub = self.create_subscription(
             Pose3D,
             '/uq/pose_3d',
             self.pose3d_callback,
             10
         )
-        self.pose_array_pub = self.create_publisher(
-            PoseArray,
+        self.marker_array_pub = self.create_publisher(
+            MarkerArray,
             '/uq/pose_3d_vis',
             10
         )
@@ -80,23 +81,56 @@ class Pose2DOverlay(Node):
         self.get_logger().info('Publishing overlayed image to /uq/pose_2d_overlay')
 
     def pose3d_callback(self, msg: Pose3D):
-        """Convert Pose3D to PoseArray and republish for RViz."""
+        """Convert Pose3D to MarkerArray (joints + skeleton) and republish for RViz."""
         if not msg.human_detected or msg.n_joints == 0:
             return
 
-        pose_array = PoseArray()
-        pose_array.header = msg.header
-
         pts = msg.points_3d
+        joints = []
         for i in range(msg.n_joints):
-            p = Pose()
-            p.position.x = pts[i * 3] / 1000.0
-            p.position.y = pts[i * 3 + 1] / 1000.0
-            p.position.z = pts[i * 3 + 2] / 1000.0
-            p.orientation.w = 1.0
-            pose_array.poses.append(p)
+            p = Point()
+            p.x = pts[i * 3] / 1000.0
+            p.y = pts[i * 3 + 1] / 1000.0
+            p.z = pts[i * 3 + 2] / 1000.0
+            joints.append(p)
 
-        self.pose_array_pub.publish(pose_array)
+        # Joints marker (spheres)
+        joint_marker = Marker()
+        joint_marker.header = msg.header
+        joint_marker.ns = 'joints'
+        joint_marker.id = 0
+        joint_marker.type = Marker.SPHERE_LIST
+        joint_marker.action = Marker.ADD
+        joint_marker.scale.x = 0.04
+        joint_marker.scale.y = 0.04
+        joint_marker.scale.z = 0.04
+        joint_marker.color.r = 1.0
+        joint_marker.color.g = 0.0
+        joint_marker.color.b = 0.0
+        joint_marker.color.a = 1.0
+        joint_marker.points = joints
+
+        # Bones marker (lines)
+        bone_marker = Marker()
+        bone_marker.header = msg.header
+        bone_marker.ns = 'bones'
+        bone_marker.id = 1
+        bone_marker.type = Marker.LINE_LIST
+        bone_marker.action = Marker.ADD
+        bone_marker.scale.x = 0.02
+        bone_marker.color.r = 0.0
+        bone_marker.color.g = 1.0
+        bone_marker.color.b = 0.0
+        bone_marker.color.a = 1.0
+        for idx1, idx2 in self.skeleton:
+            if idx1 >= msg.n_joints or idx2 >= msg.n_joints:
+                continue
+            bone_marker.points.append(joints[idx1])
+            bone_marker.points.append(joints[idx2])
+
+        marker_array = MarkerArray()
+        marker_array.markers = [joint_marker, bone_marker]
+        self.marker_array_pub.publish(marker_array)
 
     def image_callback(self, msg):
         """Store latest RGB image and trigger overlay publish."""
