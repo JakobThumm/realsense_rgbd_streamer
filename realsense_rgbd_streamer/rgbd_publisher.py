@@ -12,6 +12,11 @@ import threading
 import json
 import zstandard
 
+try:
+    from uq_msgs.msg import MotionPrediction
+except ImportError:
+    MotionPrediction = None
+
 
 class RGBDPublisher(Node):
     """
@@ -38,6 +43,8 @@ class RGBDPublisher(Node):
         self.declare_parameter('camera_namespace', '/camera/camera')
         self.declare_parameter('test_connection', False)
         self.declare_parameter('test_count', 20)  # number of ping-pong rounds
+        self.declare_parameter('stats_interval', 5.0)  # seconds between latency reports
+        self.declare_parameter('motion_topic', '/uq/motion_prediction')
 
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
@@ -81,6 +88,12 @@ class RGBDPublisher(Node):
         self.last_depth_time = None
         self.compression_times = []
 
+        # Latency tracking (perf_counter timestamps in seconds)
+        self.t_last_rgb_received = None   # when the last RGB frame arrived
+        self.t_last_image_sent = None     # when the last image was published
+        self.last_image_processing_ms = None  # ms from received to sent
+        self.latency_samples = []         # list of dicts, cleared every stats interval
+
         # Subscribers to RealSense camera
         self.rgb_sub = self.create_subscription(
             Image,
@@ -120,6 +133,24 @@ class RGBDPublisher(Node):
         # Create timer for publishing at controlled rate
         self.timer = self.create_timer(1.0 / self.publish_rate, self.publish_callback)
 
+        # Subscribe to motion prediction to measure end-to-end latency
+        motion_topic = self.get_parameter('motion_topic').value
+        if MotionPrediction is not None:
+            self.motion_sub = self.create_subscription(
+                MotionPrediction,
+                motion_topic,
+                self.motion_prediction_callback,
+                10,
+            )
+            self.get_logger().info(f'Subscribed to motion predictions: {motion_topic}')
+        else:
+            self.get_logger().warn('uq_msgs not available – latency stats disabled.')
+
+        # Latency stats timer
+        stats_interval = self.get_parameter('stats_interval').value
+        self.stats_timer = self.create_timer(stats_interval, self._report_latency_stats)
+        self._stats_interval = stats_interval
+
         # Status timer
         self.status_timer = self.create_timer(2.0, self.print_status)
 
@@ -144,6 +175,7 @@ class RGBDPublisher(Node):
             self.rgb_image = msg
             self.rgb_timestamp = msg.header.stamp
             self.rgb_received_count += 1
+            self.t_last_rgb_received = time.perf_counter()
 
             current_time = time.time()
             if self.last_rgb_time is not None:
@@ -234,12 +266,18 @@ class RGBDPublisher(Node):
                 return
 
             # Publish RGB
+            t_rgb_received_snap = self.t_last_rgb_received  # snapshot under lock
             if self.compress_rgb:
                 rgb_msg = self.compress_rgb_image(rgb_cv, self.rgb_timestamp)
                 if rgb_msg is not None:
                     self.rgb_pub.publish(rgb_msg)
             else:
                 self.rgb_pub.publish(self.rgb_image)
+
+            t_image_sent = time.perf_counter()
+            self.t_last_image_sent = t_image_sent
+            if t_rgb_received_snap is not None:
+                self.last_image_processing_ms = (t_image_sent - t_rgb_received_snap) * 1000.0
 
             # Publish Depth
             if self.compress_depth:
@@ -252,6 +290,121 @@ class RGBDPublisher(Node):
             self.published_count += 1
 
             self.get_logger().debug(f'Published frame {self.published_count}')
+
+    def motion_prediction_callback(self, msg):
+        """Receive a MotionPrediction and record end-to-end latency metrics.
+
+        The message frame_id encodes inference-side perf_counter timestamps (ms):
+          latency:{seq}:{t_received}:{t_pose_start}:{t_pose_done}:
+                  {t_motion_start}:{t_motion_done}:{t_sent}
+        All durations derived from these are purely inference-side relative values,
+        so they are valid without clock synchronisation.
+        """
+        t_motion_received = time.perf_counter()
+
+        frame_id = msg.header.frame_id
+        if not frame_id.startswith('latency:'):
+            return
+
+        with self.lock:
+            t_image_sent = self.t_last_image_sent
+            image_processing_ms = self.last_image_processing_ms
+
+        if t_image_sent is None or image_processing_ms is None:
+            return
+
+        try:
+            parts = frame_id.split(':')
+            # parts: ['latency', seq, t_received, t_pose_start, t_pose_done,
+            #          t_motion_start, t_motion_done, t_sent]
+            if len(parts) != 8:
+                return
+            t_received_inf   = int(parts[2])
+            t_pose_start_inf = int(parts[3])
+            t_pose_done_inf  = int(parts[4])
+            t_motion_start_inf = int(parts[5])
+            t_motion_done_inf  = int(parts[6])
+            t_sent_inf       = int(parts[7])
+        except (ValueError, IndexError):
+            return
+
+        pose_ms            = float(t_pose_done_inf - t_pose_start_inf)
+        motion_ms          = float(t_motion_done_inf - t_motion_start_inf)
+        inference_total_ms = float(t_sent_inf - t_received_inf)
+
+        # Total latency: publisher clock only (same machine, no sync needed)
+        total_ms = (t_motion_received - t_image_sent) * 1000.0
+
+        # Network latency = total observed - time spent computing on inference node
+        network_ms = total_ms - inference_total_ms
+
+        with self.lock:
+            self.latency_samples.append({
+                'total_ms': total_ms,
+                'image_processing_ms': image_processing_ms,
+                'pose_ms': pose_ms,
+                'motion_ms': motion_ms,
+                'network_ms': network_ms,
+            })
+
+    def _report_latency_stats(self):
+        """Print mean / 99th-percentile / max for each latency metric."""
+        with self.lock:
+            samples = self.latency_samples
+            self.latency_samples = []
+
+        n = len(samples)
+        if n == 0:
+            self.get_logger().info(
+                f'[Latency] No motion predictions received in the last '
+                f'{self._stats_interval:.0f}s window.'
+            )
+            return
+
+        def stats(key):
+            vals = sorted(s[key] for s in samples)
+            mean = sum(vals) / len(vals)
+            p99_idx = min(int(len(vals) * 0.99), len(vals) - 1)
+            p99 = vals[p99_idx]
+            return mean, p99, vals[-1]
+
+        total_s   = stats('total_ms')
+        imgproc_s = stats('image_processing_ms')
+        pose_s    = stats('pose_ms')
+        motion_s  = stats('motion_ms')
+        net_s     = stats('network_ms')
+
+        bar = '=' * 72
+        self.get_logger().info(bar)
+        self.get_logger().info(
+            f'LATENCY STATS  ({n} samples, last {self._stats_interval:.0f}s window)'
+        )
+        self.get_logger().info(bar)
+        self.get_logger().info(
+            f'{"Metric":<42} {"mean":>8} {"p99":>8} {"max":>8}  ms'
+        )
+        self.get_logger().info('-' * 72)
+        self.get_logger().info(
+            f'{"Total (image received → motion received)":<42} '
+            f'{total_s[0]:8.1f} {total_s[1]:8.1f} {total_s[2]:8.1f}'
+        )
+        self.get_logger().info(
+            f'{"Image processing (received → sent)":<42} '
+            f'{imgproc_s[0]:8.1f} {imgproc_s[1]:8.1f} {imgproc_s[2]:8.1f}'
+        )
+        self.get_logger().info(
+            f'{"3D pose estimation":<42} '
+            f'{pose_s[0]:8.1f} {pose_s[1]:8.1f} {pose_s[2]:8.1f}'
+        )
+        self.get_logger().info(
+            f'{"Motion prediction":<42} '
+            f'{motion_s[0]:8.1f} {motion_s[1]:8.1f} {motion_s[2]:8.1f}'
+        )
+        self.get_logger().info(
+            f'{"Network (total − inference compute)":<42} '
+            f'{net_s[0]:8.1f} {net_s[1]:8.1f} {net_s[2]:8.1f}'
+        )
+        self.get_logger().info(bar)
 
     def print_status(self):
         """Print status information."""
