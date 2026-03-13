@@ -294,16 +294,13 @@ class RGBDPublisher(Node):
     def motion_prediction_callback(self, msg):
         """Receive a MotionPrediction and record end-to-end latency metrics.
 
-        The message frame_id encodes inference-side perf_counter timestamps (ms):
-          latency:{seq}:{t_received}:{t_pose_start}:{t_pose_done}:
-                  {t_motion_start}:{t_motion_done}:{t_sent}
-        All durations derived from these are purely inference-side relative values,
-        so they are valid without clock synchronisation.
+        Timing fields in the message (t_*_ms) are inference-side perf_counter
+        timestamps (ms) and are internally consistent without clock synchronisation.
         """
         t_motion_received = time.perf_counter()
 
-        frame_id = msg.header.frame_id
-        if not frame_id.startswith('latency:'):
+        # Ignore messages without timing info (e.g. from an older node build)
+        if msg.t_sent_ms == 0:
             return
 
         with self.lock:
@@ -313,24 +310,9 @@ class RGBDPublisher(Node):
         if t_image_sent is None or image_processing_ms is None:
             return
 
-        try:
-            parts = frame_id.split(':')
-            # parts: ['latency', seq, t_received, t_pose_start, t_pose_done,
-            #          t_motion_start, t_motion_done, t_sent]
-            if len(parts) != 8:
-                return
-            t_received_inf   = int(parts[2])
-            t_pose_start_inf = int(parts[3])
-            t_pose_done_inf  = int(parts[4])
-            t_motion_start_inf = int(parts[5])
-            t_motion_done_inf  = int(parts[6])
-            t_sent_inf       = int(parts[7])
-        except (ValueError, IndexError):
-            return
-
-        pose_ms            = float(t_pose_done_inf - t_pose_start_inf)
-        motion_ms          = float(t_motion_done_inf - t_motion_start_inf)
-        inference_total_ms = float(t_sent_inf - t_received_inf)
+        pose_ms            = float(msg.t_pose_done_ms - msg.t_pose_start_ms)
+        motion_ms          = float(msg.t_motion_done_ms - msg.t_motion_start_ms)
+        inference_total_ms = float(msg.t_sent_ms - msg.t_received_ms)
 
         # Total latency: publisher clock only (same machine, no sync needed)
         total_ms = (t_motion_received - t_image_sent) * 1000.0
