@@ -6,9 +6,10 @@ Node to overlay 2D pose keypoints on RGB image for visualization.
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from uq_msgs.msg import Pose2D, Pose3D
+from uq_msgs.msg import Pose2D, Pose3D, MotionPrediction
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
+from std_msgs.msg import ColorRGBA
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -46,6 +47,19 @@ class Pose2DOverlay(Node):
             10
         )
 
+        # MotionPrediction -> MarkerArray visualizer
+        self.motion_pred_sub = self.create_subscription(
+            MotionPrediction,
+            '/uq/motion_prediction',
+            self.motion_prediction_callback,
+            10
+        )
+        self.motion_pred_pub = self.create_publisher(
+            MarkerArray,
+            '/uq/motion_prediction_vis',
+            10
+        )
+
         # Pose3D -> MarkerArray converter
         self.pose3d_sub = self.create_subscription(
             Pose3D,
@@ -79,6 +93,41 @@ class Pose2DOverlay(Node):
 
         self.get_logger().info('Pose 2D Overlay node initialized (13-joint model)')
         self.get_logger().info('Publishing overlayed image to /uq/pose_2d_overlay')
+
+    def motion_prediction_callback(self, msg: MotionPrediction):
+        """Visualize predicted joint positions at time step 8 (index 7)."""
+        if not msg.is_valid or msg.n_joints == 0:
+            return
+
+        t = 7  # 8th predicted time step (0-based)
+        if t >= msg.prediction_horizon_length:
+            return
+
+        pts = msg.motion_predicted
+        radii = msg.set_radius
+        n = msg.n_joints
+        markers = []
+        for j in range(n):
+            diameter = radii[t * n + j] / 1000.0 * 2
+            m = Marker()
+            m.header = msg.header
+            m.ns = 'motion_prediction'
+            m.id = j
+            m.type = Marker.SPHERE
+            m.action = Marker.ADD
+            m.pose.position.x = pts[(t * n + j) * 3] / 1000.0
+            m.pose.position.y = pts[(t * n + j) * 3 + 1] / 1000.0
+            m.pose.position.z = pts[(t * n + j) * 3 + 2] / 1000.0
+            m.pose.orientation.w = 1.0
+            m.scale.x = diameter
+            m.scale.y = diameter
+            m.scale.z = diameter
+            m.color = ColorRGBA(r=0.0, g=0.6, b=1.0, a=0.6)
+            markers.append(m)
+
+        marker_array = MarkerArray()
+        marker_array.markers = markers
+        self.motion_pred_pub.publish(marker_array)
 
     def pose3d_callback(self, msg: Pose3D):
         """Convert Pose3D to MarkerArray (joints + skeleton) and republish for RViz."""
