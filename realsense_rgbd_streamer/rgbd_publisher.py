@@ -88,12 +88,7 @@ class RGBDPublisher(Node):
         self.last_depth_time = None
         self.compression_times = []
 
-        # Latency tracking (perf_counter timestamps in seconds)
-        self.t_last_rgb_received = None          # when the last RGB frame arrived
-        self.t_last_image_sent = None            # when the last image was published
-        self.t_last_rgb_received_at_publish = None  # t_last_rgb_received snapshotted at publish time
-        self.last_image_processing_ms = None     # ms from received to sent
-        self.latency_samples = []                # list of dicts, cleared every stats interval
+        self.latency_samples = []  # list of dicts, cleared every stats interval
 
         # Subscribers to RealSense camera
         self.rgb_sub = self.create_subscription(
@@ -176,7 +171,6 @@ class RGBDPublisher(Node):
             self.rgb_image = msg
             self.rgb_timestamp = msg.header.stamp
             self.rgb_received_count += 1
-            self.t_last_rgb_received = time.perf_counter()
 
             current_time = time.time()
             if self.last_rgb_time is not None:
@@ -267,19 +261,12 @@ class RGBDPublisher(Node):
                 return
 
             # Publish RGB
-            t_rgb_received_snap = self.t_last_rgb_received  # snapshot under lock
             if self.compress_rgb:
                 rgb_msg = self.compress_rgb_image(rgb_cv, self.rgb_timestamp)
                 if rgb_msg is not None:
                     self.rgb_pub.publish(rgb_msg)
             else:
                 self.rgb_pub.publish(self.rgb_image)
-
-            t_image_sent = time.perf_counter()
-            self.t_last_image_sent = t_image_sent
-            if t_rgb_received_snap is not None:
-                self.t_last_rgb_received_at_publish = t_rgb_received_snap
-                self.last_image_processing_ms = (t_image_sent - t_rgb_received_snap) * 1000.0
 
             # Publish Depth
             if self.compress_depth:
@@ -296,45 +283,29 @@ class RGBDPublisher(Node):
     def pose_callback(self, msg):
         """Receive a Pose3D and record end-to-end latency metrics.
 
-        Timing fields in the message (t_*_ms) are inference-side perf_counter
-        timestamps (ms) and are internally consistent without clock synchronisation.
-        t_motion_start_ms / t_motion_done_ms are 0 when motion was not run this frame.
+        Total latency uses msg.header.stamp (original camera capture time, same ROS2
+        clock as this node) vs now. Inference breakdown comes from the perf_counter
+        fields embedded in the message by pose_pipeline_node.
         """
-        t_pose_received = time.perf_counter()
-
         # Ignore messages without timing info (pose_pipeline_node not rebuilt yet)
         if msg.t_sent_ms == 0:
             return
 
-        with self.lock:
-            t_image_sent = self.t_last_image_sent
-            t_rgb_received = self.t_last_rgb_received_at_publish
-            image_processing_ms = self.last_image_processing_ms
+        now_ns = self.get_clock().now().nanoseconds
+        capture_ns = rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds
+        total_ms = (now_ns - capture_ns) / 1e6
 
-        if t_image_sent is None or t_rgb_received is None or image_processing_ms is None:
-            return
-
-        pose_ms            = float(msg.t_pose_done_ms - msg.t_pose_start_ms)
-        inference_total_ms = float(msg.t_sent_ms - msg.t_received_ms)
-
-        # None when motion was not run this frame
-        motion_ms = float(msg.t_motion_done_ms - msg.t_motion_start_ms) \
+        pose_ms      = float(msg.t_pose_done_ms - msg.t_pose_start_ms)
+        inference_ms = float(msg.t_sent_ms - msg.t_received_ms)
+        motion_ms    = float(msg.t_motion_done_ms - msg.t_motion_start_ms) \
             if msg.t_motion_start_ms != 0 else None
-
-        # Total: image received at publisher → pose received at publisher (same clock)
-        total_ms = (t_pose_received - t_rgb_received) * 1000.0
-
-        # Network = total − image_processing − inference compute
-        # = time the data spent in transit (both directions combined)
-        network_ms = total_ms - image_processing_ms - inference_total_ms
 
         with self.lock:
             self.latency_samples.append({
                 'total_ms': total_ms,
-                'image_processing_ms': image_processing_ms,
                 'pose_ms': pose_ms,
+                'inference_ms': inference_ms,
                 'motion_ms': motion_ms,
-                'network_ms': network_ms,
             })
 
     def _report_latency_stats(self):
@@ -346,8 +317,7 @@ class RGBDPublisher(Node):
         n = len(samples)
         if n == 0:
             self.get_logger().info(
-                f'[Latency] No poses received in the last '
-                f'{self._stats_interval:.0f}s window.'
+                f'[Latency] No poses received in the last {self._stats_interval:.0f}s window.'
             )
             return
 
@@ -357,10 +327,9 @@ class RGBDPublisher(Node):
             p99_idx = min(int(len(vals) * 0.99), len(vals) - 1)
             return mean, vals[p99_idx], vals[-1]
 
-        total_s   = stats([s['total_ms'] for s in samples])
-        imgproc_s = stats([s['image_processing_ms'] for s in samples])
-        pose_s    = stats([s['pose_ms'] for s in samples])
-        net_s     = stats([s['network_ms'] for s in samples])
+        total_s     = stats([s['total_ms'] for s in samples])
+        pose_s      = stats([s['pose_ms'] for s in samples])
+        inference_s = stats([s['inference_ms'] for s in samples])
 
         motion_vals = [s['motion_ms'] for s in samples if s['motion_ms'] is not None]
         n_motion = len(motion_vals)
@@ -376,32 +345,28 @@ class RGBDPublisher(Node):
         )
         self.get_logger().info('-' * 72)
         self.get_logger().info(
-            f'{"Total (image received → pose received)":<42} '
+            f'{"Total (image captured → now)":<42} '
             f'{total_s[0]:8.1f} {total_s[1]:8.1f} {total_s[2]:8.1f}'
         )
         self.get_logger().info(
-            f'{"Image processing (received → sent)":<42} '
-            f'{imgproc_s[0]:8.1f} {imgproc_s[1]:8.1f} {imgproc_s[2]:8.1f}'
+            f'{"Pose pipeline inference total":<42} '
+            f'{inference_s[0]:8.1f} {inference_s[1]:8.1f} {inference_s[2]:8.1f}'
         )
         self.get_logger().info(
-            f'{"3D pose estimation":<42} '
+            f'{"  3D pose estimation":<42} '
             f'{pose_s[0]:8.1f} {pose_s[1]:8.1f} {pose_s[2]:8.1f}'
         )
         if n_motion > 0:
             motion_s = stats(motion_vals)
             self.get_logger().info(
-                f'{"Motion prediction":<42} '
+                f'{"  Motion prediction":<42} '
                 f'{motion_s[0]:8.1f} {motion_s[1]:8.1f} {motion_s[2]:8.1f}'
                 f'  ({n_motion}/{n} frames)'
             )
         else:
             self.get_logger().info(
-                f'{"Motion prediction":<42} {"n/a":>8} {"n/a":>8} {"n/a":>8}'
+                f'{"  Motion prediction":<42} {"n/a":>8} {"n/a":>8} {"n/a":>8}'
             )
-        self.get_logger().info(
-            f'{"Network (total − inference compute)":<42} '
-            f'{net_s[0]:8.1f} {net_s[1]:8.1f} {net_s[2]:8.1f}'
-        )
         self.get_logger().info(bar)
 
     def print_status(self):
