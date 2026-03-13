@@ -143,6 +143,8 @@ class Pose2DOverlay(Node):
             p.z = pts[i * 3 + 2] / 1000.0
             joints.append(p)
 
+        color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0) if msg.is_ood else ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
+
         # Joints marker (spheres)
         joint_marker = Marker()
         joint_marker.header = msg.header
@@ -153,10 +155,7 @@ class Pose2DOverlay(Node):
         joint_marker.scale.x = 0.04
         joint_marker.scale.y = 0.04
         joint_marker.scale.z = 0.04
-        joint_marker.color.r = 1.0
-        joint_marker.color.g = 0.0
-        joint_marker.color.b = 0.0
-        joint_marker.color.a = 1.0
+        joint_marker.color = color
         joint_marker.points = joints
 
         # Bones marker (lines)
@@ -167,10 +166,7 @@ class Pose2DOverlay(Node):
         bone_marker.type = Marker.LINE_LIST
         bone_marker.action = Marker.ADD
         bone_marker.scale.x = 0.02
-        bone_marker.color.r = 0.0
-        bone_marker.color.g = 1.0
-        bone_marker.color.b = 0.0
-        bone_marker.color.a = 1.0
+        bone_marker.color = color
         for idx1, idx2 in self.skeleton:
             if idx1 >= msg.n_joints or idx2 >= msg.n_joints:
                 continue
@@ -219,6 +215,9 @@ class Pose2DOverlay(Node):
                 self.get_logger().warn(f'Expected 13 joints, got {num_keypoints}')
                 # Continue anyway, but may not draw all connections
 
+            # Color: green if in-distribution, red if OOD (BGR format)
+            color_bgr = (0, 0, 255) if self.latest_pose.is_ood else (0, 255, 0)
+
             # Draw skeleton connections
             for connection in self.skeleton:
                 idx1, idx2 = connection
@@ -240,7 +239,7 @@ class Pose2DOverlay(Node):
                 pt2_int = (int(pt2[0]), int(pt2[1]))
 
                 # Draw line between keypoints
-                cv2.line(cv_image, pt1_int, pt2_int, (0, 255, 0), 2)
+                cv2.line(cv_image, pt1_int, pt2_int, color_bgr, 2)
 
             # Draw keypoints
             for i, kp in enumerate(keypoints):
@@ -254,7 +253,7 @@ class Pose2DOverlay(Node):
                 center = (int(x), int(y))
 
                 # Draw circle for each keypoint
-                cv2.circle(cv_image, center, 4, (0, 0, 255), -1)
+                cv2.circle(cv_image, center, 4, color_bgr, -1)
 
                 # Optionally draw keypoint index
                 # cv2.putText(cv_image, str(i), center,
