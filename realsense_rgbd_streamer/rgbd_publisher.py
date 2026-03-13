@@ -89,10 +89,11 @@ class RGBDPublisher(Node):
         self.compression_times = []
 
         # Latency tracking (perf_counter timestamps in seconds)
-        self.t_last_rgb_received = None   # when the last RGB frame arrived
-        self.t_last_image_sent = None     # when the last image was published
-        self.last_image_processing_ms = None  # ms from received to sent
-        self.latency_samples = []         # list of dicts, cleared every stats interval
+        self.t_last_rgb_received = None          # when the last RGB frame arrived
+        self.t_last_image_sent = None            # when the last image was published
+        self.t_last_rgb_received_at_publish = None  # t_last_rgb_received snapshotted at publish time
+        self.last_image_processing_ms = None     # ms from received to sent
+        self.latency_samples = []                # list of dicts, cleared every stats interval
 
         # Subscribers to RealSense camera
         self.rgb_sub = self.create_subscription(
@@ -277,6 +278,7 @@ class RGBDPublisher(Node):
             t_image_sent = time.perf_counter()
             self.t_last_image_sent = t_image_sent
             if t_rgb_received_snap is not None:
+                self.t_last_rgb_received_at_publish = t_rgb_received_snap
                 self.last_image_processing_ms = (t_image_sent - t_rgb_received_snap) * 1000.0
 
             # Publish Depth
@@ -300,15 +302,16 @@ class RGBDPublisher(Node):
         """
         t_pose_received = time.perf_counter()
 
-        # Ignore messages without timing info (e.g. from an older node build)
+        # Ignore messages without timing info (pose_pipeline_node not rebuilt yet)
         if msg.t_sent_ms == 0:
             return
 
         with self.lock:
             t_image_sent = self.t_last_image_sent
+            t_rgb_received = self.t_last_rgb_received_at_publish
             image_processing_ms = self.last_image_processing_ms
 
-        if t_image_sent is None or image_processing_ms is None:
+        if t_image_sent is None or t_rgb_received is None or image_processing_ms is None:
             return
 
         pose_ms            = float(msg.t_pose_done_ms - msg.t_pose_start_ms)
@@ -318,11 +321,12 @@ class RGBDPublisher(Node):
         motion_ms = float(msg.t_motion_done_ms - msg.t_motion_start_ms) \
             if msg.t_motion_start_ms != 0 else None
 
-        # Total latency: publisher clock only (same machine, no sync needed)
-        total_ms = (t_pose_received - t_image_sent) * 1000.0
+        # Total: image received at publisher → pose received at publisher (same clock)
+        total_ms = (t_pose_received - t_rgb_received) * 1000.0
 
-        # Network latency = total observed - time spent computing on inference node
-        network_ms = total_ms - inference_total_ms
+        # Network = total − image_processing − inference compute
+        # = time the data spent in transit (both directions combined)
+        network_ms = total_ms - image_processing_ms - inference_total_ms
 
         with self.lock:
             self.latency_samples.append({
