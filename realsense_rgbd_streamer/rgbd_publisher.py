@@ -13,9 +13,9 @@ import json
 import zstandard
 
 try:
-    from uq_msgs.msg import MotionPrediction
+    from uq_msgs.msg import Pose3D
 except ImportError:
-    MotionPrediction = None
+    Pose3D = None
 
 
 class RGBDPublisher(Node):
@@ -44,7 +44,7 @@ class RGBDPublisher(Node):
         self.declare_parameter('test_connection', False)
         self.declare_parameter('test_count', 20)  # number of ping-pong rounds
         self.declare_parameter('stats_interval', 5.0)  # seconds between latency reports
-        self.declare_parameter('motion_topic', '/uq/motion_prediction')
+        self.declare_parameter('pose_topic', '/uq/pose_3d')
 
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
@@ -133,16 +133,16 @@ class RGBDPublisher(Node):
         # Create timer for publishing at controlled rate
         self.timer = self.create_timer(1.0 / self.publish_rate, self.publish_callback)
 
-        # Subscribe to motion prediction to measure end-to-end latency
-        motion_topic = self.get_parameter('motion_topic').value
-        if MotionPrediction is not None:
-            self.motion_sub = self.create_subscription(
-                MotionPrediction,
-                motion_topic,
-                self.motion_prediction_callback,
+        # Subscribe to 3D pose to measure end-to-end latency (published every frame)
+        pose_topic = self.get_parameter('pose_topic').value
+        if Pose3D is not None:
+            self.pose_sub = self.create_subscription(
+                Pose3D,
+                pose_topic,
+                self.pose_callback,
                 10,
             )
-            self.get_logger().info(f'Subscribed to motion predictions: {motion_topic}')
+            self.get_logger().info(f'Subscribed to 3D poses for latency stats: {pose_topic}')
         else:
             self.get_logger().warn('uq_msgs not available – latency stats disabled.')
 
@@ -291,13 +291,14 @@ class RGBDPublisher(Node):
 
             self.get_logger().debug(f'Published frame {self.published_count}')
 
-    def motion_prediction_callback(self, msg):
-        """Receive a MotionPrediction and record end-to-end latency metrics.
+    def pose_callback(self, msg):
+        """Receive a Pose3D and record end-to-end latency metrics.
 
         Timing fields in the message (t_*_ms) are inference-side perf_counter
         timestamps (ms) and are internally consistent without clock synchronisation.
+        t_motion_start_ms / t_motion_done_ms are 0 when motion was not run this frame.
         """
-        t_motion_received = time.perf_counter()
+        t_pose_received = time.perf_counter()
 
         # Ignore messages without timing info (e.g. from an older node build)
         if msg.t_sent_ms == 0:
@@ -311,11 +312,14 @@ class RGBDPublisher(Node):
             return
 
         pose_ms            = float(msg.t_pose_done_ms - msg.t_pose_start_ms)
-        motion_ms          = float(msg.t_motion_done_ms - msg.t_motion_start_ms)
         inference_total_ms = float(msg.t_sent_ms - msg.t_received_ms)
 
+        # None when motion was not run this frame
+        motion_ms = float(msg.t_motion_done_ms - msg.t_motion_start_ms) \
+            if msg.t_motion_start_ms != 0 else None
+
         # Total latency: publisher clock only (same machine, no sync needed)
-        total_ms = (t_motion_received - t_image_sent) * 1000.0
+        total_ms = (t_pose_received - t_image_sent) * 1000.0
 
         # Network latency = total observed - time spent computing on inference node
         network_ms = total_ms - inference_total_ms
@@ -338,28 +342,29 @@ class RGBDPublisher(Node):
         n = len(samples)
         if n == 0:
             self.get_logger().info(
-                f'[Latency] No motion predictions received in the last '
+                f'[Latency] No poses received in the last '
                 f'{self._stats_interval:.0f}s window.'
             )
             return
 
-        def stats(key):
-            vals = sorted(s[key] for s in samples)
+        def stats(vals):
+            vals = sorted(vals)
             mean = sum(vals) / len(vals)
             p99_idx = min(int(len(vals) * 0.99), len(vals) - 1)
-            p99 = vals[p99_idx]
-            return mean, p99, vals[-1]
+            return mean, vals[p99_idx], vals[-1]
 
-        total_s   = stats('total_ms')
-        imgproc_s = stats('image_processing_ms')
-        pose_s    = stats('pose_ms')
-        motion_s  = stats('motion_ms')
-        net_s     = stats('network_ms')
+        total_s   = stats([s['total_ms'] for s in samples])
+        imgproc_s = stats([s['image_processing_ms'] for s in samples])
+        pose_s    = stats([s['pose_ms'] for s in samples])
+        net_s     = stats([s['network_ms'] for s in samples])
+
+        motion_vals = [s['motion_ms'] for s in samples if s['motion_ms'] is not None]
+        n_motion = len(motion_vals)
 
         bar = '=' * 72
         self.get_logger().info(bar)
         self.get_logger().info(
-            f'LATENCY STATS  ({n} samples, last {self._stats_interval:.0f}s window)'
+            f'LATENCY STATS  ({n} poses, last {self._stats_interval:.0f}s window)'
         )
         self.get_logger().info(bar)
         self.get_logger().info(
@@ -367,7 +372,7 @@ class RGBDPublisher(Node):
         )
         self.get_logger().info('-' * 72)
         self.get_logger().info(
-            f'{"Total (image received → motion received)":<42} '
+            f'{"Total (image received → pose received)":<42} '
             f'{total_s[0]:8.1f} {total_s[1]:8.1f} {total_s[2]:8.1f}'
         )
         self.get_logger().info(
@@ -378,10 +383,17 @@ class RGBDPublisher(Node):
             f'{"3D pose estimation":<42} '
             f'{pose_s[0]:8.1f} {pose_s[1]:8.1f} {pose_s[2]:8.1f}'
         )
-        self.get_logger().info(
-            f'{"Motion prediction":<42} '
-            f'{motion_s[0]:8.1f} {motion_s[1]:8.1f} {motion_s[2]:8.1f}'
-        )
+        if n_motion > 0:
+            motion_s = stats(motion_vals)
+            self.get_logger().info(
+                f'{"Motion prediction":<42} '
+                f'{motion_s[0]:8.1f} {motion_s[1]:8.1f} {motion_s[2]:8.1f}'
+                f'  ({n_motion}/{n} frames)'
+            )
+        else:
+            self.get_logger().info(
+                f'{"Motion prediction":<42} {"n/a":>8} {"n/a":>8} {"n/a":>8}'
+            )
         self.get_logger().info(
             f'{"Network (total − inference compute)":<42} '
             f'{net_s[0]:8.1f} {net_s[1]:8.1f} {net_s[2]:8.1f}'
