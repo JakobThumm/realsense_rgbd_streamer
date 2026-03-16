@@ -35,7 +35,7 @@ Visualization Manager:
       Size (m): 0.01
       Style: Flat Squares
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
@@ -52,7 +52,7 @@ Visualization Manager:
       Name: RGB Image
       Normalize Range: true
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
@@ -67,7 +67,7 @@ Visualization Manager:
       Name: Pose 2D Overlay
       Normalize Range: true
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
@@ -78,7 +78,7 @@ Visualization Manager:
       Enabled: true
       Name: MotionPrediction
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
@@ -89,7 +89,7 @@ Visualization Manager:
       Enabled: true
       Name: Pose3D
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last

@@ -2,6 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import String
 from cv_bridge import CvBridge
@@ -74,6 +75,19 @@ class RGBDPublisher(Node):
 
     def _init_normal_mode(self, camera_ns):
         """Initialize normal RGBD streaming mode."""
+        reliable_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=25,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        best_effort_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=25,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
         # Latest images storage
         self.rgb_image = None
         self.depth_image = None
@@ -95,36 +109,36 @@ class RGBDPublisher(Node):
             Image,
             f'{camera_ns}/color/image_raw',
             self.rgb_callback,
-            10)
+            reliable_qos)
 
         self.depth_sub = self.create_subscription(
             Image,
             f'{camera_ns}/aligned_depth_to_color/image_raw',
             self.depth_callback,
-            10)
+            reliable_qos)
 
         # Publishers
         if self.compress_rgb:
             self.rgb_pub = self.create_publisher(
                 CompressedImage,
                 'rgbd_stream/rgb/compressed',
-                10)
+                reliable_qos)
         else:
             self.rgb_pub = self.create_publisher(
                 Image,
                 'rgbd_stream/rgb/raw',
-                10)
+                reliable_qos)
 
         if self.compress_depth:
             self.depth_pub = self.create_publisher(
                 CompressedImage,
                 'rgbd_stream/depth/compressed',
-                10)
+                reliable_qos)
         else:
             self.depth_pub = self.create_publisher(
                 Image,
                 'rgbd_stream/depth/raw',
-                10)
+                reliable_qos)
 
         # Create timer for publishing at controlled rate
         self.timer = self.create_timer(1.0 / self.publish_rate, self.publish_callback)
@@ -136,7 +150,7 @@ class RGBDPublisher(Node):
                 Pose3D,
                 pose_topic,
                 self.pose_callback,
-                10,
+                best_effort_qos,
             )
             self.get_logger().info(f'Subscribed to 3D poses for latency stats: {pose_topic}')
         else:

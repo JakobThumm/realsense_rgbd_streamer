@@ -5,6 +5,7 @@ Node to overlay 2D pose keypoints on RGB image for visualization.
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image
 from uq_msgs.msg import Pose2D, Pose3D, MotionPrediction
 from visualization_msgs.msg import Marker, MarkerArray
@@ -21,6 +22,13 @@ class Pose2DOverlay(Node):
 
         self.bridge = CvBridge()
 
+        best_effort_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
         # Latest data
         self.latest_image = None
         self.latest_pose = None
@@ -30,21 +38,21 @@ class Pose2DOverlay(Node):
             Image,
             '/camera/camera/color/image_raw',
             self.image_callback,
-            10
+            best_effort_qos,
         )
 
         self.pose_sub = self.create_subscription(
             Pose2D,
             '/uq/pose_2d',
             self.pose_callback,
-            10
+            best_effort_qos,
         )
 
         # Publisher for annotated image
         self.overlay_pub = self.create_publisher(
             Image,
             '/uq/pose_2d_overlay',
-            10
+            best_effort_qos,
         )
 
         # MotionPrediction -> MarkerArray visualizer
@@ -52,12 +60,12 @@ class Pose2DOverlay(Node):
             MotionPrediction,
             '/uq/motion_prediction',
             self.motion_prediction_callback,
-            10
+            best_effort_qos,
         )
         self.motion_pred_pub = self.create_publisher(
             MarkerArray,
             '/uq/motion_prediction_vis',
-            10
+            best_effort_qos,
         )
 
         # Pose3D -> MarkerArray converter
@@ -65,12 +73,12 @@ class Pose2DOverlay(Node):
             Pose3D,
             '/uq/pose_3d',
             self.pose3d_callback,
-            10
+            best_effort_qos,
         )
         self.marker_array_pub = self.create_publisher(
             MarkerArray,
             '/uq/pose_3d_vis',
-            10
+            best_effort_qos,
         )
 
         # Joint names for interpretability (13 joints)
