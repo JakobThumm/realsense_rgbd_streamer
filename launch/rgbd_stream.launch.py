@@ -53,6 +53,12 @@ def generate_launch_description():
         description='RealSense camera namespace'
     )
 
+    stream_reliable_arg = DeclareLaunchArgument(
+        'stream_reliable',
+        default_value='true',
+        description='QoS reliability for /rgbd_stream topics: true=Reliable, false=Best Effort'
+    )
+
     rgbd_publisher = Node(
         package='realsense_rgbd_streamer',
         executable='rgbd_publisher',
@@ -67,6 +73,7 @@ def generate_launch_description():
             'depth_zstd_level': LaunchConfiguration('depth_zstd_level'),
             'depth_png_compression': LaunchConfiguration('depth_png_compression'),
             'camera_namespace': LaunchConfiguration('camera_namespace'),
+            'stream_reliable': LaunchConfiguration('stream_reliable'),
         }]
     )
 
@@ -79,5 +86,6 @@ def generate_launch_description():
         depth_zstd_level_arg,
         depth_png_compression_arg,
         camera_namespace_arg,
+        stream_reliable_arg,
         rgbd_publisher,
     ])

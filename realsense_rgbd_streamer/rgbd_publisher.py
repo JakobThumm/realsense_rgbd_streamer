@@ -46,6 +46,7 @@ class RGBDPublisher(Node):
         self.declare_parameter('test_count', 20)  # number of ping-pong rounds
         self.declare_parameter('stats_interval', 5.0)  # seconds between latency reports
         self.declare_parameter('pose_topic', '/uq/pose_3d')
+        self.declare_parameter('stream_reliable', True)  # QoS for /rgbd_stream topics
 
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
@@ -87,6 +88,11 @@ class RGBDPublisher(Node):
             depth=25,
             durability=DurabilityPolicy.VOLATILE,
         )
+        stream_reliable = self.get_parameter('stream_reliable').value
+        stream_qos = reliable_qos if stream_reliable else best_effort_qos
+        self.get_logger().info(
+            f'Stream QoS: {"Reliable" if stream_reliable else "Best Effort"} (keep_last=25)'
+        )
 
         # Latest images storage
         self.rgb_image = None
@@ -122,23 +128,23 @@ class RGBDPublisher(Node):
             self.rgb_pub = self.create_publisher(
                 CompressedImage,
                 'rgbd_stream/rgb/compressed',
-                reliable_qos)
+                stream_qos)
         else:
             self.rgb_pub = self.create_publisher(
                 Image,
                 'rgbd_stream/rgb/raw',
-                reliable_qos)
+                stream_qos)
 
         if self.compress_depth:
             self.depth_pub = self.create_publisher(
                 CompressedImage,
                 'rgbd_stream/depth/compressed',
-                reliable_qos)
+                stream_qos)
         else:
             self.depth_pub = self.create_publisher(
                 Image,
                 'rgbd_stream/depth/raw',
-                reliable_qos)
+                stream_qos)
 
         # Create timer for publishing at controlled rate
         self.timer = self.create_timer(1.0 / self.publish_rate, self.publish_callback)

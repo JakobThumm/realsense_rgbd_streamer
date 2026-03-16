@@ -77,6 +77,12 @@ def generate_launch_description():
         description='Camera pose preset from config/camera_poses.yaml'
     )
 
+    stream_reliable_arg = DeclareLaunchArgument(
+        'stream_reliable',
+        default_value='true',
+        description='QoS reliability for /rgbd_stream topics: true=Reliable, false=Best Effort'
+    )
+
     camera_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_dir, 'launch', 'realsense_camera.launch.py')
@@ -101,6 +107,7 @@ def generate_launch_description():
             'depth_zstd_level': LaunchConfiguration('depth_zstd_level'),
             'depth_png_compression': LaunchConfiguration('depth_png_compression'),
             'camera_namespace': LaunchConfiguration('streamer_camera_namespace'),
+            'stream_reliable': LaunchConfiguration('stream_reliable'),
         }.items()
     )
 
@@ -116,6 +123,7 @@ def generate_launch_description():
         depth_png_compression_arg,
         camera_namespace_arg,  # named 'streamer_camera_namespace' to avoid leaking into rs_launch.py
         camera_pose_arg,
+        stream_reliable_arg,
         camera_launch,
         TimerAction(period=5.0, actions=[streamer_launch]),
     ])
