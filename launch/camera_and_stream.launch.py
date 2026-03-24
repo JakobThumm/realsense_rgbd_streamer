@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import SetParameter
 from ament_index_python.packages import get_package_share_directory
 import os
 
@@ -83,6 +84,11 @@ def generate_launch_description():
         description='QoS reliability for /rgbd_stream topics: true=Reliable, false=Best Effort'
     )
 
+    set_publish_rate = SetParameter(
+        name='publish_rate',
+        value=LaunchConfiguration('publish_rate')
+    )
+
     camera_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_dir, 'launch', 'realsense_camera.launch.py')
@@ -115,6 +121,7 @@ def generate_launch_description():
         depth_profile_arg,
         color_profile_arg,
         publish_rate_arg,
+        set_publish_rate,
         compress_rgb_arg,
         compress_depth_arg,
         rgb_quality_arg,

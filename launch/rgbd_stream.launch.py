@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetParameter
 
 
 def generate_launch_description():
@@ -59,13 +59,17 @@ def generate_launch_description():
         description='QoS reliability for /rgbd_stream topics: true=Reliable, false=Best Effort'
     )
 
+    set_publish_rate = SetParameter(
+        name='publish_rate',
+        value=LaunchConfiguration('publish_rate')
+    )
+
     rgbd_publisher = Node(
         package='realsense_rgbd_streamer',
         executable='rgbd_publisher',
         name='rgbd_publisher',
         output='screen',
         parameters=[{
-            'publish_rate': LaunchConfiguration('publish_rate'),
             'compress_rgb': LaunchConfiguration('compress_rgb'),
             'compress_depth': LaunchConfiguration('compress_depth'),
             'rgb_quality': LaunchConfiguration('rgb_quality'),
@@ -79,6 +83,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         publish_rate_arg,
+        set_publish_rate,
         compress_rgb_arg,
         compress_depth_arg,
         rgb_quality_arg,
