@@ -312,7 +312,7 @@ class RGBDPublisher(Node):
             return
 
         now_ns = self.get_clock().now().nanoseconds
-        capture_ns = rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds
+        capture_ns = rclpy.time.Time.from_msg(msg.t_image).nanoseconds
         total_ms = (now_ns - capture_ns) / 1e6
 
         pose_ms      = float(msg.t_pose_done_ms - msg.t_pose_start_ms)
