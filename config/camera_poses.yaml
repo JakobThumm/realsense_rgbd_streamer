@@ -21,6 +21,14 @@ presets:
     pitch: 0.0
     yaw: 0.0
 
+  lab_shelf:
+    x: 4.50
+    y: 2.35
+    z: 0.75
+    roll: 0.0
+    pitch: 0.3
+    yaw: -1.57079
+
   overhead:
     x: 0.0
     y: 0.0
