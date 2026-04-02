@@ -23,7 +23,7 @@ presets:
 
   lab_shelf:
     x: 4.50
-    y: 2.35
+    y: 2.30
     z: 0.75
     roll: 0.0
     pitch: 0.3
